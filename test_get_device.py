@@ -22,7 +22,11 @@ app = FastAPI()
 
 
 
+# ------------ APP ANDROID ---------------------------------
+
+
 # --- 2. MODEL DỮ LIỆU ---
+# ĐĂNG NHẬP TÀI KHOẢN
 class LoginRequest(BaseModel):
     username: str
     password: str
@@ -72,7 +76,7 @@ async def login(req: LoginRequest):
 
 
 
-# --------------------------------------------------------------------------------
+# --- APP LẤY DANH SÁCH THIẾT BỊ 
 class RoomSchema(BaseModel):
     room_name: str
 
@@ -134,8 +138,13 @@ async def get_devices(
 
 
 
-# ------------------------------------------
 
+
+
+
+
+# -----------------MÁY CẦM TAY-------------------------
+# CHẾ ĐỘ KIỂM KÊ
 class ScanRequest(BaseModel):
     device_code: str
     handheld_name: str
@@ -173,7 +182,9 @@ async def scan_and_log(req: ScanRequest, user: dict = Depends(get_current_user))
     }
     
     
-# ---------------------------------------------------
+    
+    
+# CHẾ ĐỘ BÁO CÁO THIẾT BỊ
 class ReportRequest(BaseModel):
     device_code: str
     description: str | None = None
@@ -201,7 +212,7 @@ async def report_device_issue(req: ReportRequest, user: dict = Depends(get_curre
     # 3. Cập nhật trạng thái mới nhất trực tiếp vào bảng devices
     supabase.table("devices").update({"status": req.status_reported}).eq("id", device_id).execute()
 
-    return {"message": "Báo cáo thành công", "device": res.data[0]['device_name']}
+    return {"message": "REPORT SUCCSESS"}#, "device": res.data[0]['device_name']}
 
 
 
