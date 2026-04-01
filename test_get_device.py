@@ -145,6 +145,33 @@ async def get_devices(
 
 # -----------------MÁY CẦM TAY-------------------------
 # CHẾ ĐỘ KIỂM KÊ
+
+import re
+
+def remove_vietnamese_accent(text: str) -> str:
+    if not text:
+        return ""
+    # Mảng các ký tự thay thế
+    patterns = {
+        '[àáảãạăằắẳẵặâầấẩẫậ]': 'a',
+        '[èéẻẽẹêềếểễệ]': 'e',
+        '[ìíỉĩị]': 'i',
+        '[òóỏõọôồốổỗộơờớởỡợ]': 'o',
+        '[ùúủũụưừứửữự]': 'u',
+        '[ỳýỷỹỵ]': 'y',
+        '[đ]': 'd',
+        '[ÀÁẢÃẠĂẰẮẲẴẶÂẦẤẨẪẬ]': 'A',
+        '[ÈÉỞẼẸÊỀẾỂỄỆ]': 'E',
+        '[ÌÍỈĨỊ]': 'I',
+        '[ÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢ]': 'O',
+        '[ÙÚỦŨỤƯỪỨỬỮỰ]': 'U',
+        '[ỲÝỶỸỴ]': 'Y',
+        '[Đ]': 'D'
+    }
+    for pattern, replacement in patterns.items():
+        text = re.sub(pattern, replacement, text)
+    return text
+
 class ScanRequest(BaseModel):
     device_code: str
     handheld_name: str
@@ -159,7 +186,8 @@ async def scan_and_log(req: ScanRequest, user: dict = Depends(get_current_user))
         raise HTTPException(status_code=404, detail="Device Not Found")
     
     device = res.data[0]
-    
+    device["device_name"] = remove_vietnamese_accent(device["device_name"])
+    device["status"] = remove_vietnamese_accent(device["status"])
     # 2. Ghi nhật ký kiểm kê (Log)
     log_entry = {
         "device_id": device["id"],
