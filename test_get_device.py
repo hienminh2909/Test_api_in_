@@ -177,7 +177,7 @@ class ScanRequest(BaseModel):
     handheld_name: str
 # --- API KIỂM KÊ ---
 @app.post("/api/inventory/scan")
-async def scan_and_log(req: ScanRequest, user: dict = Depends(get_current_user)):
+async def scan_and_log(req: ScanRequest):
     # 1. Lấy thông tin thiết bị và phòng
     res = supabase.table("devices").select("id, device_name, status, rooms(room_name)")\
         .eq("device_code", req.device_code).execute()
@@ -188,7 +188,7 @@ async def scan_and_log(req: ScanRequest, user: dict = Depends(get_current_user))
     device = res.data[0]
     device["device_name"] = remove_vietnamese_accent(device["device_name"])
     device["status"] = remove_vietnamese_accent(device["status"])
-    # 2. Ghi nhật ký kiểm kê (Log)
+    # 2. Ghi nhật ký kiểm kê (Log) 
     log_entry = {
         "device_id": device["id"],
         "handheld_name": req.handheld_name,
@@ -215,31 +215,39 @@ async def scan_and_log(req: ScanRequest, user: dict = Depends(get_current_user))
 # CHẾ ĐỘ BÁO CÁO THIẾT BỊ
 class ReportRequest(BaseModel):
     device_code: str
-    description: str | None = None
-    status_reported: str  # Ví dụ: "Đã hỏng" hoặc "Cần bảo trì"
+    status_device: str  # Ví dụ: "Đã hỏng" hoặc "Cần bảo trì"
+    request_type: str
+    description: str
     handheld_name: str
 
 @app.post("/api/report/device")
-async def report_device_issue(req: ReportRequest, user: dict = Depends(get_current_user)):
+async def report_device_issue(req: ReportRequest):
     # 1. Tìm thiết bị
     res = supabase.table("devices").select("id, device_name").eq("device_code", req.device_code).execute()
     if not res.data:
         raise HTTPException(status_code=404, detail="Device Not Found")
     
     device_id = res.data[0]['id']
+    
+    res_1 = supabase.table("users").select("*").eq("handheld_name", req.handheld_name).execute()
+    
+    if not res_1.data:
+        raise HTTPException(status_code=404, detail="USER Not Found")
+    
+    user = res_1.data[0] 
 
     # 2. Ghi vào bảng log_reports
     report_data = {
+        "created_by": user['id'],
         "device_id": device_id,
-        "handheld_name": req.handheld_name,
+        "status_device": req.status_device,
         "description": req.description,
-        "status": req.status_reported
+        "request_type": req.request_type
     }
-    supabase.table("report_logs").insert(report_data).execute()
+    supabase.table("requests").insert(report_data).execute()
 
     # 3. Cập nhật trạng thái mới nhất trực tiếp vào bảng devices
-    supabase.table("devices").update({"status": req.status_reported}).eq("id", device_id).execute()
-
+    # supabase.table("devices").update({"status": req.status_reported}).eq("id", device_id).execute()
     return {"message": "REPORT SUCCSESS"}#, "device": res.data[0]['device_name']}
 
 
