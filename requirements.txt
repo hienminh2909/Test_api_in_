@@ -4,3 +4,9 @@ supabase
 python-jose[cryptography]
 pydantic
 python-multipart
+qrcode
+python-barcode
+pandas
+openpyxl
+pillow
+python-dateutil

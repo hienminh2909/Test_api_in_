@@ -1,0 +1,543 @@
+from fastapi import FastAPI, Depends, HTTPException, Header
+from fastapi.middleware.cors import CORSMiddleware
+from supabase import create_client, Client
+from jose import jwt, JWTError
+from datetime import datetime, timedelta
+
+from pydantic import BaseModel
+from typing import List, Optional
+import qrcode
+import io
+import time
+from barcode import Code128
+from barcode.writer import ImageWriter
+from datetime import datetime
+# Các import cũ của bạn (FastAPI, supabase...) giữ nguyên nhé
+
+# --- 1. CẤU HÌNH HỆ THỐNG ---
+SUPABASE_URL = "https://bcrztgtuoiexafijgtvw.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJjcnp0Z3R1b2lleGFmaWpndHZ3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwNTg2NTgsImV4cCI6MjA4ODYzNDY1OH0.OWv0Ure8c1tth87oMtRN--Z_YFQKAQ7mphQjD9uDQis"
+SECRET_KEY = "HIEN_PRO_SECRET_KEY"  # Chìa khóa để ký Token
+ALGORITHM = "HS256"
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+app = FastAPI()
+
+
+
+
+# --- 2. MODEL DỮ LIỆU ---
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+# --- 3. HÀM KIỂM TRA TOKEN (SECURITY) ---
+async def get_current_user(authorization: str = Header(None)):
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Chưa đăng nhập")
+    try:
+        # Tách chuỗi "Bearer <token>"
+        token = authorization.split(" ")[1]
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload  # Trả về: {"user_id": 1, "role": "admin", "room_id": 101}
+    except (JWTError, IndexError):
+        raise HTTPException(status_code=401, detail="Token không hợp lệ hoặc hết hạn")
+
+# --- 4. API ĐĂNG NHẬP (LOGIN) ---
+@app.post("/login")
+async def login(req: LoginRequest):
+    # Truy vấn User từ Supabase
+    res = supabase.table("users").select("*").eq("username", req.username).execute()
+    user = res.data[0] if res.data else None
+
+    # Kiểm tra mật khẩu (So sánh trực tiếp để Hiển dễ test trước)
+    if not user or user['password_hash'] != req.password:
+        raise HTTPException(status_code=401, detail="Tài khoản hoặc mật khẩu không đúng")
+
+    # Tạo nội dung Token (Payload)
+    token_data = {
+        "user_id": user['id'],
+        "role": user['role'],
+        "room_id": user.get('room_id'), 
+        "exp": datetime.utcnow() + timedelta(days=1) # Token dùng được trong 24h
+    }
+    
+    # Mã hóa thành chuỗi Token
+    token = jwt.encode(token_data, SECRET_KEY, algorithm=ALGORITHM)
+
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "role": user['role'],
+        "full_name": user['full_name']
+    }
+
+
+
+
+
+# --------------------------------------------------------------------------------
+class RoomSchema(BaseModel):
+    room_name: str
+
+class CategorySchema(BaseModel):
+    category_name: str
+
+class DeviceResponse(BaseModel):
+    id: int
+    device_name: str
+    device_code: str
+    status: str
+    description: Optional[str] = None
+    qr_url: Optional[str] = None
+    barcode_url: Optional[str] = None
+    created_at: Optional[str] = None
+    last_inventory_at: Optional[str] = None
+    purchase_date: Optional[str] = None
+    image_url: Optional[str] = None
+    rooms: RoomSchema
+    categories: CategorySchema
+    quantity: int = 1
+    device_price : Optional[str] = None
+    # Dòng này cực kỳ quan trọng:
+    all_devices_detail: List[dict] = []
+    
+
+@app.get("/api/devices", response_model=List[DeviceResponse])
+async def get_devices(
+    category_id: Optional[int] = None,
+    status: Optional[str] = None,
+    search: Optional[str] = None,
+    user: dict = Depends(get_current_user)
+):
+    role = user.get("role")
+    user_room_id = user.get("room_id")
+
+    # Khởi tạo query
+    query = supabase.table("devices").select("*, rooms(room_name), categories(category_name)")
+
+    # Phân quyền
+    if role == "teacher":
+        if user_room_id is None: 
+            return [] # Trả về list rỗng nếu giáo viên không có phòng
+        query = query.eq("room_id", user_room_id)
+
+    # Bộ lọc trạng thái
+    if status and status.strip():
+        query = query.eq("status", status)
+
+    # Bộ lọc loại
+    if category_id:
+        query = query.eq("category_id", category_id)
+
+    # Tìm kiếm
+    if search and search.strip():
+        val = f"%{search}%"
+        room_ids_res = supabase.table("rooms").select("id").ilike("room_name", val).execute()
+        room_ids = [str(r['id']) for r in room_ids_res.data]
+        if room_ids:
+            room_filter = f"room_id.in.({','.join(room_ids)})"
+            query = query.or_(f"device_name.ilike.{val},{room_filter}")
+        else:
+            query = query.ilike("device_name", val)
+
+    # Thực thi query
+    response = query.order("created_at", desc=True).execute()
+    
+    # KIỂM TRA: Nếu không có dữ liệu, trả về list rỗng ngay
+    if not response.data:
+        return []
+
+    raw_data = response.data
+    grouped_data = {}
+
+    for item in raw_data:
+        # Đảm bảo rooms và categories không bị None để tránh lỗi khi item.get
+        room_obj = item.get("rooms") or {"room_name": "N/A"}
+        cat_obj = item.get("categories") or {"category_name": "N/A"}
+        
+        room_n = room_obj.get("room_name", "N/A")
+        cat_n = cat_obj.get("category_name", "N/A")
+        
+        group_key = f"{item['device_name']}-{room_n}-{cat_n}-{item['status']}"
+        
+        current_device_detail = {
+            "id": item["id"],
+            "device_code": item["device_code"],
+            "qr_url": item.get("qr_url"),
+            # "image_url": item.get("image_url"),
+        }
+
+        if group_key not in grouped_data:
+            # Tạo bản sao để không làm hỏng dữ liệu gốc
+            new_item = item.copy()
+            new_item["quantity"] = 1
+            new_item["all_devices_detail"] = [current_device_detail]
+            # Đảm bảo lồng dữ liệu đúng cấu trúc Pydantic
+            new_item["rooms"] = room_obj
+            new_item["categories"] = cat_obj
+            new_item["image_url"] = item.get("image_url")
+            grouped_data[group_key] = new_item
+        else:
+            grouped_data[group_key]["quantity"] += 1
+            grouped_data[group_key]["all_devices_detail"].append(current_device_detail)
+            # Nếu bản ghi đầu tiên chưa có ảnh mà bản ghi sau có, thì cập nhật ảnh nhóm
+            if not grouped_data[group_key].get("image_url") and item.get("image_url"):
+                grouped_data[group_key]["image_url"] = item.get("image_url")
+
+    return list(grouped_data.values())
+
+# --- 6. MODEL CẬP NHẬT ---
+class DeviceUpdate(BaseModel):
+    status: str
+
+@app.put("/api/update_device/{device_id}")
+async def update_device_status(
+    device_id: int, 
+    req: dict, 
+    user: dict = Depends(get_current_user)
+):
+    try:
+        new_status = req.get("status")
+        new_name = req.get("device_name")
+        new_room_name = req.get("room_name") # Thêm dòng này
+        new_description = req.get("description")    # THÊM DÒNG NÀY
+        new_purchase_date = req.get("purchase_date")
+        new_category_name = req.get("category")
+        update_data = {"last_inventory_at": datetime.utcnow().isoformat()}
+        
+        if new_status: update_data["status"] = new_status
+        if new_name: update_data["device_name"] = new_name
+        if new_description: update_data["description"] = new_description     # THÊM DÒNG NÀY
+        if new_purchase_date: update_data["purchase_date"] = new_purchase_date
+        # Nếu Admin muốn đổi phòng
+        if new_room_name:
+            room_res = supabase.table("rooms").select("id").eq("room_name", new_room_name).execute()
+            if room_res.data:
+                update_data["room_id"] = room_res.data[0]['id']
+            else:
+                raise HTTPException(status_code=404, detail=f"Phòng {new_room_name} không tồn tại")
+        
+        if new_category_name:
+            category_res = supabase.table("categories").select("id").eq("category_name",new_category_name).execute()
+            if category_res.data:
+                update_data["category_id"] = category_res.data[0]['id']
+            else:
+                raise HTTPException(status_code=404, detail=f"Danh muc {new_category_name} không tồn tại")
+                
+        res = supabase.table("devices").update(update_data).eq("id", device_id).execute()
+        return {"message": "Cập nhật thành công!"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
+
+@app.delete("/api/devices/{device_id}")
+async def delete_device(device_id: int, user: dict = Depends(get_current_user)):
+    # 1. Lấy role và chuyển về chữ thường để so sánh
+    user_role = str(user.get("role", "")).lower()
+    
+    if user_role != "admin":
+        raise HTTPException(
+            status_code=403, 
+            detail="Bạn không có quyền Admin để thực hiện thao tác này!"
+        )
+        
+    try:
+        # 2. Thực hiện xóa (Database sẽ tự lo phần Cascade nếu đã chạy SQL ở Bước 1)
+        res = supabase.table("devices").delete().eq("id", device_id).execute()
+        
+        if not res.data:
+            raise HTTPException(status_code=404, detail="Không tìm thấy thiết bị")
+            
+        return {"message": "Đã xóa thiết bị thành công"}
+        
+    except Exception as e:
+        # Trả về lỗi chi tiết từ database nếu có
+        raise HTTPException(status_code=400, detail=str(e))
+
+# đổi mk
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
+
+@app.post("/api/change-password")
+async def change_password(req: ChangePasswordRequest, user: dict = Depends(get_current_user)):
+    user_id = user.get("user_id")
+    
+    try:
+        # 1. Kiểm tra mật khẩu cũ có đúng không
+        res = supabase.table("users").select("password_hash").eq("id", user_id).execute()
+        if not res.data:
+            raise HTTPException(status_code=404, detail="Không tìm thấy người dùng")
+            
+        current_password_hash = res.data[0]['password_hash']
+        
+        if current_password_hash != req.old_password:
+            raise HTTPException(status_code=400, detail="Mật khẩu cũ không chính xác")
+
+        # 2. Cập nhật mật khẩu mới vào Database
+        update_res = supabase.table("users").update({"password_hash": req.new_password}).eq("id", user_id).execute()
+        
+        if update_res.data:
+            return {"message": "Đổi mật khẩu thành công"}
+        else:
+            raise HTTPException(status_code=500, detail="Cập nhật mật khẩu thất bại")
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        print(f"Lỗi đổi mật khẩu: {str(e)}")
+        raise HTTPException(status_code=500, detail="Lỗi hệ thống")
+
+
+# --- 7. MODEL ĐĂNG KÝ THIẾT BỊ ---
+class RegisterDivice(BaseModel):
+    device_name: str
+    room_name: str
+    category_name: str
+    status: str
+    # device_price: str
+    description: Optional[str] = None  # THÊM: Nhận mô tả từ Android
+    purchase_date: Optional[str] = None
+    quantity: Optional[int] = 1
+
+@app.post("/api/devices/register")
+async def register_device(form: RegisterDivice, user: dict = Depends(get_current_user)):
+    try:
+        # 1. Tra cứu room_id và category_id (Giữ nguyên)
+        room_res = supabase.table("rooms").select("id").eq("room_name", form.room_name).execute()
+        if not room_res.data:
+            raise HTTPException(status_code=404, detail=f"Phòng {form.room_name} không tồn tại")
+        
+        cat_res = supabase.table("categories").select("id, category_code").eq("category_name", form.category_name).execute()
+        if not cat_res.data:
+            raise HTTPException(status_code=404, detail="Loại thiết bị không tồn tại")       
+        
+        category_id = cat_res.data[0]['id']
+        category_code = cat_res.data[0]['category_code']
+        r_id = room_res.data[0]['id']
+
+        qty = form.quantity if form.quantity and form.quantity > 0 else 1
+        base_ts = int(time.time())
+        
+        # Mảng để gom tất cả dữ liệu thiết bị trước khi chèn vào DB
+        devices_to_insert = []
+
+        # 2. VÒNG LẶP CHUẨN BỊ DỮ LIỆU VÀ UPLOAD ẢNH
+        for i in range(qty):
+            suffix = i + 1
+            dev_code = f"{form.room_name.replace(' ', '')}-{category_code}-{base_ts}-{suffix}"
+            
+            # --- TẠO QR CODE ---
+            qr = qrcode.make(dev_code)
+            qr_byte_arr = io.BytesIO()
+            qr.save(qr_byte_arr, format='PNG')
+            qr_path = f"qr_{dev_code}.png"
+            
+            supabase.storage.from_("qrcodes").upload(
+                path=qr_path,
+                file=qr_byte_arr.getvalue(),
+                file_options={"content-type": "image/png"}
+            )
+            qr_url = supabase.storage.from_("qrcodes").get_public_url(qr_path)
+            
+            # --- TẠO BARCODE ---
+            bar_byte_arr = io.BytesIO()
+            Code128(dev_code, writer=ImageWriter()).write(bar_byte_arr)
+            bar_path = f"bar_{dev_code}.png"
+            
+            supabase.storage.from_("qrcodes").upload(
+                path=bar_path,
+                file=bar_byte_arr.getvalue(),
+                file_options={"content-type": "image/png"}
+            )
+            bar_url = supabase.storage.from_("qrcodes").get_public_url(bar_path)
+            
+            # CHÈN VÀO DANH SÁCH TẠM (Chưa gọi DB)
+            devices_to_insert.append({
+                "device_name": form.device_name,
+                "device_code": dev_code,
+                "room_id": r_id,
+                "category_id": category_id,
+                "status": form.status,
+                "description": form.description,
+                "purchase_date": form.purchase_date,
+                # "device_price": form.device_price,
+                "qr_url": qr_url,
+                "barcode_url": bar_url,
+                "created_at": datetime.utcnow().isoformat()
+            })
+        
+        # 3. THỰC HIỆN CHÈN HÀNG LOẠT (BULK INSERT) - Chỉ gọi DB 1 lần duy nhất
+        # Đây là mấu chốt để dữ liệu đồng bộ ngay lập tức cho 1 hay 100 máy
+        res = supabase.table("devices").insert(devices_to_insert).execute()
+        
+        if not res.data:
+            raise HTTPException(status_code=500, detail="Không thể lưu thiết bị vào cơ sở dữ liệu")
+
+        # Trả về danh sách ID từ kết quả của Bulk Insert
+        return {
+            "message": f"Đã đăng ký thành công {len(res.data)} thiết bị",
+            "count": len(res.data),
+            "ids": [d['id'] for d in res.data]
+        }
+
+    except Exception as e:
+        print(f"Lỗi API: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+ 
+import pandas as pd
+import io
+from fastapi import UploadFile, File, HTTPException, Depends
+
+# 
+@app.post("/api/devices/import-and-register")
+async def import_and_register(file: UploadFile = File(...)):
+    try:
+        # 1. Đọc file Excel an toàn
+        contents = await file.read()
+        df = pd.read_excel(io.BytesIO(contents))
+        
+        if df.empty:
+            raise HTTPException(status_code=400, detail="File rỗng")
+
+        devices_to_insert = []
+        base_ts = int(time.time())
+
+        for index, row in df.iterrows():
+            d_name = str(row.get('device_name', ''))
+            r_name = str(row.get('room_name', ''))
+            c_name = str(row.get('category_name', ''))
+            qty = int(row.get('quantity', 1))
+
+            # Tìm ID nhanh (Nếu file lớn nên dùng cache dict)
+            room_res = supabase.table("rooms").select("id").eq("room_name", r_name).execute()
+            cat_res = supabase.table("categories").select("id, category_code").eq("category_name", c_name).execute()
+
+            if not room_res.data or not cat_res.data: continue
+
+            r_id = room_res.data[0]['id']
+            c_id = cat_res.data[0]['id']
+            c_code = cat_res.data[0]['category_code']
+
+            for i in range(qty):
+                dev_code = f"{r_name.replace(' ', '')}-{c_code}-{base_ts}-{index}-{i+1}"
+                
+                # Tạo QR & Upload
+                qr_buf = io.BytesIO()
+                qrcode.make(dev_code).save(qr_buf, format='PNG')
+                qr_path = f"qr_{dev_code}.png"
+                supabase.storage.from_("qrcodes").upload(qr_path, qr_buf.getvalue(), {"content-type": "image/png"})
+                qr_url = supabase.storage.from_("qrcodes").get_public_url(qr_path)
+
+                # Tạo Barcode & Upload
+                bar_buf = io.BytesIO()
+                Code128(dev_code, writer=ImageWriter()).write(bar_buf)
+                bar_path = f"bar_{dev_code}.png"
+                supabase.storage.from_("qrcodes").upload(bar_path, bar_buf.getvalue(), {"content-type": "image/png"})
+                bar_url = supabase.storage.from_("qrcodes").get_public_url(bar_path)
+
+                devices_to_insert.append({
+                    "device_name": d_name, "device_code": dev_code,
+                    "room_id": r_id, "category_id": c_id, "status": "AVAILABLE",
+                    "qr_url": qr_url, "barcode_url": bar_url,
+                    "created_at": datetime.utcnow().isoformat()
+                })
+
+        # 2. Chèn hàng loạt vào Supabase
+        res = supabase.table("devices").insert(devices_to_insert).execute()
+        return {"status": "success", "ids": [d['id'] for d in res.data], "count": len(res.data)}
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))   
+    
+#kiểm kê    
+# --- API 1: Lấy danh sách các phòng và tiến độ (Dùng cho màn hình đầu tiên) ---
+@app.get("/api/inventory/rooms-progress")
+async def get_rooms_progress(user: dict = Depends(get_current_user)):
+    try:
+        role = user.get("role")
+        user_room_id = user.get("room_id")
+        
+        # Lấy thời gian đầu tháng hiện tại (UTC) để tính tiến độ tháng này
+        now = datetime.utcnow()
+        first_day_of_month = datetime(now.year, now.month, 1).isoformat()
+
+        # 1. Lấy danh sách phòng (Nếu là giáo viên thì chỉ thấy phòng mình)
+        query = supabase.table("rooms").select("id, room_name")
+        if role == "teacher" and user_room_id:
+            query = query.eq("id", user_room_id)
+        
+        rooms_res = query.execute()
+        rooms = rooms_res.data
+
+        results = []
+        for room in rooms:
+            # Đếm tổng số thiết bị trong phòng này
+            total_res = supabase.table("devices").select("id", count="exact").eq("room_id", room['id']).execute()
+            total_count = total_res.count if total_res.count is not None else 0
+
+            # Đếm số thiết bị đã được cập nhật 'last_inventory_at' trong tháng này
+            checked_res = supabase.table("devices").select("id", count="exact") \
+                .eq("room_id", room['id']) \
+                .gte("last_inventory_at", first_day_of_month).execute()
+            checked_count = checked_res.count if checked_res.count is not None else 0
+
+            # Tính % tiến độ
+            progress = int((checked_count / total_count * 100)) if total_count > 0 else 0
+
+            results.append({
+                "room_id": room['id'],
+                "room_name": room['room_name'],
+                "total": total_count,
+                "checked": checked_count,
+                "progress": progress
+            })
+
+        return results
+    except Exception as e:
+        print(f"Lỗi Rooms Progress: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- API 2: Lấy chi tiết thiết bị theo phòng và tháng (Dùng khi bấm vào 1 phòng) ---
+@app.get("/api/inventory/details/{room_id}")
+async def get_inventory_details(
+    room_id: int, 
+    month: int, 
+    year: int, 
+    user: dict = Depends(get_current_user) # Bắt buộc có dòng này để khớp với Android Header
+):
+    try:
+        import calendar
+        # Xác định khoảng thời gian của tháng/năm đã chọn
+        _, last_day = calendar.monthrange(year, month)
+        start_date = f"{year}-{month:02d}-01T00:00:00"
+        end_date = f"{year}-{month:02d}-{last_day}T23:59:59"
+
+        # Lấy toàn bộ thiết bị thuộc phòng này
+        res = supabase.table("devices").select("*").eq("room_id", room_id).execute()
+        devices = res.data
+
+        results = []
+        for d in devices:
+            last_check = d.get("last_inventory_at")
+            
+            # Logic kiểm tra: Nếu 'last_inventory_at' nằm trong tháng/năm đang xem -> Đã xong
+            is_checked = False
+            if last_check and start_date <= last_check <= end_date:
+                is_checked = True
+            
+            results.append({
+                "id": d["id"],
+                "device_name": d["device_name"],
+                "status": d["status"],
+                "is_checked": is_checked,
+                "last_check": last_check
+            })
+        
+        return results
+    except Exception as e:
+        print(f"Lỗi Inventory Details: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
