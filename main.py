@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routers import auth, devices, inventory, rooms, categories, users, reports, requests, dashboard, notifications
+from api.routers import auth, devices, inventory, rooms, categories, users, reports, requests, dashboard, notifications, handheld
 
 app = FastAPI(title="Quản lý Thiết bị API", version="1.0.0")
 
@@ -23,6 +23,7 @@ app.include_router(reports.router, prefix="/api/reports", tags=["Reports"])
 app.include_router(requests.router, prefix="/api/requests", tags=["Requests"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["Dashboard"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
+app.include_router(handheld.router, prefix="/api/handheld", tags=["Handheld"])
 
 @app.get("/")
 async def root():
