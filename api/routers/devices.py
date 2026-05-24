@@ -174,8 +174,30 @@ def get_devices_summary(
 
     return list(grouped_data.values())
 
+from fastapi import BackgroundTasks
+
+def send_register_notifications(user, num_devices, device_name, room_name):
+    try:
+        sender_id = user.get("user_id")
+        sender_name = user.get("username") or "Người dùng"
+        
+        admins = supabase.table("users").select("id").in_("role", ["admin", "Admin"]).execute()
+        admin_ids = [a["id"] for a in admins.data]
+        
+        notif_title = "✨ Thiết bị mới đã được đăng ký"
+        notif_content = f"Người dùng {sender_name} đã đăng ký thành công {num_devices} thiết bị {device_name} vào {room_name}."
+        notif_link = f"/devices/list?search={device_name}&roomName={room_name}"
+        
+        for admin_id in admin_ids:
+            if admin_id != sender_id: 
+                create_notification(admin_id, notif_title, notif_content, notif_link)
+        
+        create_notification(sender_id, "✅ Đăng ký thành công", f"Bạn đã đăng ký thành công {num_devices} thiết bị mới vào {room_name}.", notif_link)
+    except Exception as e:
+        print(f">>> ERROR generating registration notification: {e}")
+
 @router.post("")
-def register_device(form: RegisterDevice, user: dict = Depends(get_current_user)):
+def register_device(form: RegisterDevice, background_tasks: BackgroundTasks, user: dict = Depends(get_current_user)):
     role = user.get("role")
     user_room_id = user.get("room_id")
     
@@ -184,7 +206,6 @@ def register_device(form: RegisterDevice, user: dict = Depends(get_current_user)
         if user_room_id is None:
             raise HTTPException(status_code=403, detail="Tài khoản giáo viên chưa được gán phòng quản lý")
         
-        # Lấy thông tin phòng mà giáo viên quản lý
         teacher_room = supabase.table("rooms").select("room_name").eq("id", user_room_id).execute()
         if not teacher_room.data or teacher_room.data[0]["room_name"] != form.room_name:
             raise HTTPException(status_code=403, detail=f"Bạn chỉ có quyền đăng ký thiết bị cho phòng {teacher_room.data[0]['room_name'] if teacher_room.data else 'được giao'}")
@@ -220,7 +241,7 @@ def register_device(form: RegisterDevice, user: dict = Depends(get_current_user)
             bar_url = get_safe_url("qrcodes", bar_path)
             return qr_url, bar_url
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
             for i in range(qty):
                 suffix = i + 1
                 dev_code = f"{form.room_name.replace(' ', '')}-{category_code}-{base_ts}-{suffix}"
@@ -252,35 +273,14 @@ def register_device(form: RegisterDevice, user: dict = Depends(get_current_user)
         if not res.data:
             raise HTTPException(status_code=500, detail="Không thể lưu thiết bị vào cơ sở dữ liệu")
 
-        # THÔNG BÁO HỆ THỐNG
-        try:
-            sender_id = user.get("user_id")
-            sender_name = user.get("username") or "Người dùng"
-            
-            # Lấy danh sách Admin
-            admins = supabase.table("users").select("id").in_("role", ["admin", "Admin"]).execute()
-            admin_ids = [a["id"] for a in admins.data]
-            
-            notif_title = "✨ Thiết bị mới đã được đăng ký"
-            notif_content = f"Người dùng {sender_name} đã đăng ký thành công {len(res.data)} thiết bị {form.device_name} vào {form.room_name}."
-            # Link tự động lọc theo cả Tên thiết bị và Phòng học để kết quả chính xác tuyệt đối
-            notif_link = f"/devices/list?search={form.device_name}&roomName={form.room_name}"
-            
-            # Thông báo cho Admins
-            for admin_id in admin_ids:
-                if admin_id != sender_id: 
-                    create_notification(admin_id, notif_title, notif_content, notif_link)
-            
-            # Thông báo cho chính người đăng ký
-            create_notification(sender_id, "✅ Đăng ký thành công", f"Bạn đã đăng ký thành công {len(res.data)} thiết bị mới vào {form.room_name}.", notif_link)
-        except Exception as e:
-            print(f">>> ERROR generating registration notification: {e}")
+        background_tasks.add_task(send_register_notifications, user, len(res.data), form.device_name, form.room_name)
 
         return {
             "message": f"Đã đăng ký thành công {len(res.data)} thiết bị",
             "count": len(res.data),
             "ids": [d['id'] for d in res.data],
-            "qr_urls": [d.get('qr_url') for d in res.data]
+            "qr_urls": [d.get('qr_url') for d in res.data],
+            "device_codes": [d.get('device_code') for d in res.data]
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -382,8 +382,34 @@ def download_template():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+def send_import_notifications(user, df):
+    try:
+        sender_id = user.get("user_id")
+        sender_name = user.get("username") or "Người dùng"
+        
+        admins = supabase.table("users").select("id").in_("role", ["admin", "Admin"]).execute()
+        admin_ids = [a["id"] for a in admins.data]
+
+        for index, row in df.iterrows():
+            d_name = str(row.get('device_name', ''))
+            r_name = str(row.get('room_name', ''))
+            qty = int(row.get('quantity', 1))
+
+            notif_title = f"📥 Nhập mới: {d_name}"
+            notif_content = f"Người dùng {sender_name} đã nhập {qty} thiết bị {d_name} vào {r_name}."
+            notif_link = f"/devices/list?search={d_name}"
+
+            for admin_id in admin_ids:
+                if admin_id != sender_id:
+                    create_notification(admin_id, notif_title, notif_content, notif_link)
+            
+            create_notification(sender_id, f"✅ Đã nhập: {d_name}", f"Đã nhập thành công {qty} thiết bị vào {r_name}.", notif_link)
+
+    except Exception as e:
+        print(f">>> ERROR generating split import notifications: {e}")
+
 @router.post("/import")
-def import_and_register(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+def import_and_register(file: UploadFile = File(...), background_tasks: BackgroundTasks = None, user: dict = Depends(get_current_user)):
     try:
         contents = file.file.read()
         df = pd.read_excel(io.BytesIO(contents))
@@ -395,11 +421,9 @@ def import_and_register(file: UploadFile = File(...), user: dict = Depends(get_c
             if user_room_id is None:
                 raise HTTPException(status_code=403, detail="Tài khoản chưa được gán phòng quản lý")
             
-            # Lấy tên phòng của giáo viên
             teacher_room = supabase.table("rooms").select("room_name").eq("id", user_room_id).execute()
             if teacher_room.data:
                 t_room_name = teacher_room.data[0]["room_name"]
-                # Lọc bỏ các dòng không thuộc phòng của giáo viên
                 df = df[df['room_name'].astype(str) == t_room_name]
                 if df.empty:
                     raise HTTPException(status_code=403, detail=f"File import không chứa thiết bị nào thuộc phòng {t_room_name}")
@@ -430,7 +454,7 @@ def import_and_register(file: UploadFile = File(...), user: dict = Depends(get_c
             bar_url = get_safe_url("qrcodes", bar_path)
             return qr_url, bar_url
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
             for index, row in df.iterrows():
                 d_name = str(row.get('device_name', ''))
                 r_name = str(row.get('room_name', ''))
@@ -474,42 +498,15 @@ def import_and_register(file: UploadFile = File(...), user: dict = Depends(get_c
 
         res = supabase.table("devices").insert(devices_to_insert).execute()
         
-        # THÔNG BÁO HỆ THỐNG (TÁCH RIÊNG THEO TỪNG HÀNG TRONG EXCEL)
-        try:
-            sender_id = user.get("user_id")
-            sender_name = user.get("username") or "Người dùng"
-            
-            admins = supabase.table("users").select("id").in_("role", ["admin", "Admin"]).execute()
-            admin_ids = [a["id"] for a in admins.data]
-
-            # Đã lọc df trước đó cho teacher, nên giờ chỉ cần duyệt df để tạo thông báo
-            # Vì ta chèn devices_to_insert theo đúng thứ tự hàng trong df, 
-            # ta có thể tạo thông báo tương ứng cho mỗi hàng.
-            for index, row in df.iterrows():
-                d_name = str(row.get('device_name', ''))
-                r_name = str(row.get('room_name', ''))
-                qty = int(row.get('quantity', 1))
-
-                notif_title = f"📥 Nhập mới: {d_name}"
-                notif_content = f"Người dùng {sender_name} đã nhập {qty} thiết bị {d_name} vào {r_name}."
-                notif_link = f"/devices/list?search={d_name}"
-
-                # Thông báo cho Admins
-                for admin_id in admin_ids:
-                    if admin_id != sender_id:
-                        create_notification(admin_id, notif_title, notif_content, notif_link)
-                
-                # Thông báo cho chính người thực hiện
-                create_notification(sender_id, f"✅ Đã nhập: {d_name}", f"Đã nhập thành công {qty} thiết bị vào {r_name}.", notif_link)
-
-        except Exception as e:
-            print(f">>> ERROR generating split import notifications: {e}")
+        if background_tasks:
+            background_tasks.add_task(send_import_notifications, user, df)
 
         return {
             "status": "success",
             "ids": [d['id'] for d in res.data],
             "count": len(res.data),
-            "qr_urls": [d.get('qr_url') for d in res.data]
+            "qr_urls": [d.get('qr_url') for d in res.data],
+            "device_codes": [d.get('device_code') for d in res.data]
         }
 
     except Exception as e:

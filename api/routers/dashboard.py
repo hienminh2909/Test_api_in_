@@ -12,7 +12,7 @@ def get_recent_activity(user: dict = Depends(get_current_user)):
         inventory_logs = supabase.table("inventory_logs").select("*, devices(device_name)").order("inventory_at", desc=True).limit(5).execute()
         
         # 2. Lấy 5 báo hỏng gần đây
-        report_logs = supabase.table("report_logs").select("*, devices(device_name), users:created_by(full_name)").order("reported_at", desc=True).limit(5).execute()
+        report_logs = supabase.table("requests").select("*, devices(device_name), users!requests_created_by_fkey(full_name)").eq("request_type", "REPORT").order("created_at", desc=True).limit(5).execute()
         
         # 3. Lấy 5 thiết bị mới thêm gần đây
         new_devices = supabase.table("devices").select("*, rooms(room_name)").order("created_at", desc=True).limit(5).execute()
@@ -38,7 +38,7 @@ def get_recent_activity(user: dict = Depends(get_current_user)):
                 "title": "Báo hỏng mới",
                 "content": f"Thiết bị: {d_name} - Vấn đề: {log.get('description', 'Chưa có mô tả')}",
                 "description": f"Thiết bị: {d_name} - Vấn đề: {log.get('description', 'Chưa có mô tả')}",
-                "time": log.get("reported_at"),
+                "time": log.get("created_at"),
                 "user": u_name
             })
 

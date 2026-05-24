@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from datetime import datetime
 from pydantic import BaseModel
 
@@ -9,10 +9,16 @@ router = APIRouter()
 
 @router.get("/logs")
 def get_inventory_logs(user: dict = Depends(get_current_user)):
-    if user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Chỉ admin mới có quyền xem lịch sử kiểm kê")
-    res = supabase.table("inventory_logs").select("*, devices(device_name, device_code)").order("inventory_at", desc=True).execute()
-    return res.data
+    role = user.get("role")
+    user_room_id = user.get("room_id")
+    
+    res = supabase.table("inventory_logs").select("*, devices(device_name, device_code, room_id, rooms(room_name)), users(full_name)").order("inventory_at", desc=True).execute()
+    
+    logs = res.data
+    if role == "teacher" and user_room_id:
+        logs = [log for log in logs if log.get("devices") and log["devices"].get("room_id") == user_room_id]
+        
+    return logs
 
 @router.get("/rooms-progress")
 def get_rooms_progress(
@@ -105,7 +111,6 @@ def get_inventory_details(
 class InventoryScanRequest(BaseModel):
     device_id: int
     status_at_scan: str
-    handheld_name: str
 
 @router.post("/scan")
 def scan_inventory(req: InventoryScanRequest, user: dict = Depends(get_current_user)):
@@ -120,7 +125,7 @@ def scan_inventory(req: InventoryScanRequest, user: dict = Depends(get_current_u
             "device_id": req.device_id,
             "status_at_scan": req.status_at_scan,
             "inventory_at": now,
-            "handheld_name": req.handheld_name
+            "resolved_by": user.get("user_id")
         }
         res = supabase.table("inventory_logs").insert(log_data).execute()
         
@@ -128,5 +133,25 @@ def scan_inventory(req: InventoryScanRequest, user: dict = Depends(get_current_u
             raise HTTPException(status_code=500, detail="Không thể ghi log kiểm kê")
             
         return {"message": "Ghi nhận kiểm kê thành công"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.delete("/logs/{log_id}")
+def delete_inventory_log(log_id: int, user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Chỉ admin mới có quyền xóa lịch sử kiểm kê")
+    try:
+        res = supabase.table("inventory_logs").delete().eq("id", log_id).execute()
+        return {"message": "Xóa nhật ký thành công"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.delete("/logs")
+def clear_all_inventory_logs(user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Chỉ admin mới có quyền xóa lịch sử kiểm kê")
+    try:
+        res = supabase.table("inventory_logs").delete().neq("id", 0).execute()
+        return {"message": "Đã xóa toàn bộ nhật ký thành công"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

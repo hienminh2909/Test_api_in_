@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from core.config import supabase
 from services.auth_service import get_current_user
 from pydantic import BaseModel
@@ -41,6 +41,13 @@ def delete_notification(notif_id: int, user: dict = Depends(get_current_user)):
     curr_user_id = user.get("user_id")
     print(f">>> DEBUG: Deleting notif {notif_id} for user {curr_user_id}")
     res = supabase.table("notifications").delete().eq("id", notif_id).eq("user_id", curr_user_id).execute()
+    return {"success": True}
+
+@router.delete("")
+def delete_all_notifications(user: dict = Depends(get_current_user)):
+    curr_user_id = user.get("user_id")
+    print(f">>> DEBUG: Deleting all notifications for user {curr_user_id}")
+    res = supabase.table("notifications").delete().eq("user_id", curr_user_id).execute()
     return {"success": True}
 
 @router.post("/test")

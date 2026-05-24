@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from core.config import supabase
 from services.auth_service import get_current_user
 from schemas.request import RequestCreate
@@ -96,18 +96,6 @@ def resolve_request(request_id: int, status: str, user: dict = Depends(get_curre
             # 1. Ngắt kết nối với thiết bị để tránh bị xóa lan truyền (Cascade Delete)
             update_resolve_data["device_id"] = None
             supabase.table("requests").update(update_resolve_data).eq("id", request_id).execute()
-
-            # 2. Lưu log xóa vào report_logs
-            log_data = {
-                "device_id": dev_id,
-                "status": "ĐÃ XÓA",
-                "description": req.get("description", "Xóa thiết bị theo yêu cầu"),
-                "note": f"Thiết bị: {device_name} ({req.get('devices', {}).get('device_code', 'N/A')}) đã bị xóa vĩnh viễn khỏi hệ thống bởi yêu cầu #{request_id}",
-                "created_by": req.get("created_by"),
-                "resolved_by": user.get("user_id"),
-                "reported_at": datetime.utcnow().isoformat()
-            }
-            supabase.table("report_logs").insert(log_data).execute()
             
             # Tiến hành xóa thiết bị
             supabase.table("devices").delete().eq("id", dev_id).execute()
@@ -121,16 +109,6 @@ def resolve_request(request_id: int, status: str, user: dict = Depends(get_curre
             new_status = req.get("status_device")
             if new_status and new_status != "pending":
                 supabase.table("devices").update({"status": new_status}).eq("id", dev_id).execute()
-            
-            log_data = {
-                "device_id": dev_id, "status": new_status or "Đã duyệt",
-                "description": req.get("description", ""),
-                "note": f"Duyệt yêu cầu #{request_id} bởi Admin",
-                "created_by": req.get("created_by"), "resolved_by": user.get("user_id"),
-                "reported_at": datetime.utcnow().isoformat()
-            }
-            supabase.table("report_logs").insert(log_data).execute()
-
     # THÔNG BÁO CHO NGƯỜI GỬI
     status_label = "PHÊ DUYỆT" if status == "approved" else "TỪ CHỐI"
     create_notification(
@@ -142,3 +120,25 @@ def resolve_request(request_id: int, status: str, user: dict = Depends(get_curre
 
     res = supabase.table("requests").update(update_resolve_data).eq("id", request_id).execute()
     return res.data[0] if res.data else None
+
+@router.delete("/{request_id}")
+def delete_request(request_id: int, user: dict = Depends(get_current_user)):
+    user_role = str(user.get("role", "")).lower()
+    if user_role != "admin":
+        raise HTTPException(status_code=403, detail="Chỉ admin mới có quyền xóa yêu cầu")
+    try:
+        res = supabase.table("requests").delete().eq("id", request_id).execute()
+        return {"message": "Xóa yêu cầu thành công"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.delete("")
+def clear_all_requests(user: dict = Depends(get_current_user)):
+    user_role = str(user.get("role", "")).lower()
+    if user_role != "admin":
+        raise HTTPException(status_code=403, detail="Chỉ admin mới có quyền xóa yêu cầu")
+    try:
+        res = supabase.table("requests").delete().neq("id", 0).execute()
+        return {"message": "Đã xóa toàn bộ yêu cầu thành công"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))

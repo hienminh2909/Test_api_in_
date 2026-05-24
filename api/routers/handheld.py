@@ -66,10 +66,14 @@ async def scan_and_log(req: HandheldScanRequest):
     room_name = device["rooms"]["room_name"] if device.get("rooms") else "N/A"
     room_name_safe = remove_vietnamese_accent(room_name)
 
-    # 2. Ghi nhật ký kiểm kê (Log) 
+    # 2. Tìm người dùng qua handheld_name để gán vào resolved_by
+    res_user = supabase.table("users").select("id").eq("handheld_name", req.handheld_name).execute()
+    user_id = res_user.data[0]['id'] if res_user.data else None
+
+    # 3. Ghi nhật ký kiểm kê (Log) 
     log_entry = {
         "device_id": device["id"],
-        "handheld_name": req.handheld_name,
+        "resolved_by": user_id,
         "inventory_at": datetime.utcnow().isoformat(),
         "status_at_scan": device["status"] # Lưu status gốc vào DB
     }

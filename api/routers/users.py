@@ -1,8 +1,9 @@
-﻿from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from core.config import supabase
 from services.auth_service import get_current_user
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 from typing import Optional
+import re
 
 router = APIRouter()
 
@@ -15,6 +16,56 @@ class UserCreate(BaseModel):
     phone: Optional[str] = None
     email: Optional[str] = None
 
+    @validator("full_name")
+    def validate_full_name(cls, v):
+        v = v.strip()
+        if len(v) < 2:
+            raise ValueError("Họ và tên phải có ít nhất 2 ký tự")
+        return v
+
+    @validator("username")
+    def validate_username(cls, v):
+        v = v.strip().lower()
+        if len(v) < 3 or len(v) > 20:
+            raise ValueError("Tên đăng nhập phải từ 3 đến 20 ký tự")
+        if not re.match(r"^[a-z0-9_-]+$", v):
+            raise ValueError("Tên đăng nhập chỉ được chứa chữ cái thường, chữ số, dấu gạch dưới (_) hoặc gạch ngang (-)")
+        return v
+
+    @validator("password_hash")
+    def validate_password(cls, v):
+        v = v.strip()
+        if len(v) < 6:
+            raise ValueError("Mật khẩu phải có ít nhất 6 ký tự")
+        if " " in v:
+            raise ValueError("Mật khẩu không được chứa khoảng trắng")
+        return v
+
+    @validator("role")
+    def validate_role(cls, v):
+        v = v.strip().lower()
+        if v not in ["admin", "teacher"]:
+            raise ValueError("Vai trò không hợp lệ (chỉ chấp nhận admin hoặc teacher)")
+        return v
+
+    @validator("phone")
+    def validate_phone(cls, v):
+        if not v:
+            return None
+        v = v.strip()
+        if not re.match(r"^(0|\+84)[0-9]{9,10}$", v):
+            raise ValueError("Số điện thoại không hợp lệ (phải bắt đầu bằng 0 hoặc +84 và gồm 10 chữ số)")
+        return v
+
+    @validator("email")
+    def validate_email(cls, v):
+        if not v:
+            return None
+        v = v.strip()
+        if not re.match(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$", v):
+            raise ValueError("Email không hợp lệ")
+        return v
+
 class UserUpdate(BaseModel):
     full_name: Optional[str] = None
     role: Optional[str] = None
@@ -22,9 +73,54 @@ class UserUpdate(BaseModel):
     phone: Optional[str] = None
     email: Optional[str] = None
 
+    @validator("full_name")
+    def validate_full_name(cls, v):
+        if v is None:
+            return v
+        v = v.strip()
+        if len(v) < 2:
+            raise ValueError("Họ và tên phải có ít nhất 2 ký tự")
+        return v
+
+    @validator("role")
+    def validate_role(cls, v):
+        if v is None:
+            return v
+        v = v.strip().lower()
+        if v not in ["admin", "teacher"]:
+            raise ValueError("Vai trò không hợp lệ (chỉ chấp nhận admin hoặc teacher)")
+        return v
+
+    @validator("phone")
+    def validate_phone(cls, v):
+        if not v:
+            return None
+        v = v.strip()
+        if not re.match(r"^(0|\+84)[0-9]{9,10}$", v):
+            raise ValueError("Số điện thoại không hợp lệ (phải bắt đầu bằng 0 hoặc +84 và gồm 10 chữ số)")
+        return v
+
+    @validator("email")
+    def validate_email(cls, v):
+        if not v:
+            return None
+        v = v.strip()
+        if not re.match(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$", v):
+            raise ValueError("Email không hợp lệ")
+        return v
+
 class PasswordChange(BaseModel):
     old_password: str
     new_password: str
+
+    @validator("new_password")
+    def validate_new_password(cls, v):
+        v = v.strip()
+        if len(v) < 6:
+            raise ValueError("Mật khẩu mới phải có ít nhất 6 ký tự")
+        if " " in v:
+            raise ValueError("Mật khẩu mới không được chứa khoảng trắng")
+        return v
 
 @router.get("/me")
 def get_my_profile(user: dict = Depends(get_current_user)):
@@ -76,6 +172,12 @@ def get_users(user: dict = Depends(get_current_user)):
 def create_user(req: UserCreate, user: dict = Depends(get_current_user)):
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Chỉ admin mới có quyền thao tác")
+    
+    # Kiểm tra xem username đã tồn tại chưa
+    check_user = supabase.table("users").select("id").eq("username", req.username).execute()
+    if check_user.data:
+        raise HTTPException(status_code=400, detail="Tên đăng nhập đã tồn tại trên hệ thống")
+
     try:
         res = supabase.table("users").insert(req.dict()).execute()
         if not res.data:

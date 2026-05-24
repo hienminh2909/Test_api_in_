@@ -6,4 +6,4 @@ class InventoryLogSchema(BaseModel):
     device_id: int
     status_at_scan: Optional[str] = None
     inventory_at: Optional[str] = None
-    handheld_name: Optional[str] = None
+    resolved_by: Optional[int] = None
