@@ -48,7 +48,7 @@ def get_all_requests(status: str = None, user: dict = Depends(get_current_user))
     if user_role != "admin":
         raise HTTPException(status_code=403, detail="Chỉ admin mới có quyền xem toàn bộ yêu cầu")
     
-    query = supabase.table("requests").select("*, devices(device_name, device_code, room_id, rooms(room_name)), users!requests_created_by_fkey(full_name), resolver:users!requests_resolved_by_fkey(full_name)")
+    query = supabase.table("requests").select("*, devices(device_name, device_code, room_id, description, purchase_date, device_price, status, image_url, categories(category_name), rooms(room_name)), users!requests_created_by_fkey(full_name), resolver:users!requests_resolved_by_fkey(full_name)")
     
     if status == "pending":
         query = query.or_("status_resolve.is.null,status_resolve.eq.pending")
@@ -62,7 +62,7 @@ def get_all_requests(status: str = None, user: dict = Depends(get_current_user))
 
 @router.get("/me")
 def get_my_requests(user: dict = Depends(get_current_user)):
-    res = supabase.table("requests").select("*, devices(device_name, device_code)").eq("created_by", user.get("user_id")).order("created_at", desc=True).execute()
+    res = supabase.table("requests").select("*, devices(device_name, device_code, room_id, description, purchase_date, device_price, status, image_url, categories(category_name), rooms(room_name))").eq("created_by", user.get("user_id")).order("created_at", desc=True).execute()
     return res.data
 
 @router.put("/{request_id}/resolve")
