@@ -42,6 +42,19 @@ def create_request(req: RequestCreate, user: dict = Depends(get_current_user)):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+@router.get("/pending-count")
+def get_pending_requests_count(user: dict = Depends(get_current_user)):
+    user_role = str(user.get("role", "")).lower()
+    
+    query = supabase.table("requests").select("id", count="exact")
+    
+    if user_role != "admin":
+        query = query.eq("created_by", user.get("user_id"))
+        
+    res = query.or_("status_resolve.is.null,status_resolve.eq.pending").execute()
+    
+    return {"count": res.count if res.count is not None else 0}
+
 @router.get("")
 def get_all_requests(status: str = None, user: dict = Depends(get_current_user)):
     user_role = str(user.get("role", "")).lower()
