@@ -227,46 +227,24 @@ def register_device(form: RegisterDevice, background_tasks: BackgroundTasks, use
         base_ts = int(time.time())
         devices_to_insert = []
 
-        def upload_codes(dev_code):
-            qr_buf = io.BytesIO()
-            qrcode.make(dev_code).save(qr_buf, format='PNG')
-            qr_path = f"qr_{dev_code}.png"
-            supabase.storage.from_("qrcodes").upload(qr_path, qr_buf.getvalue(), {"content-type": "image/png"})
-            qr_url = get_safe_url("qrcodes", qr_path)
+        for i in range(qty):
+            suffix = i + 1
+            dev_code = f"{form.room_name.replace(' ', '')}-{category_code}-{base_ts}-{suffix}"
             
-            bar_buf = io.BytesIO()
-            Code128(dev_code, writer=ImageWriter()).write(bar_buf)
-            bar_path = f"bar_{dev_code}.png"
-            supabase.storage.from_("qrcodes").upload(bar_path, bar_buf.getvalue(), {"content-type": "image/png"})
-            bar_url = get_safe_url("qrcodes", bar_path)
-            return qr_url, bar_url
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-            for i in range(qty):
-                suffix = i + 1
-                dev_code = f"{form.room_name.replace(' ', '')}-{category_code}-{base_ts}-{suffix}"
-                
-                future = executor.submit(upload_codes, dev_code)
-                
-                devices_to_insert.append({
-                    "device_name": form.device_name,
-                    "device_code": dev_code,
-                    "room_id": r_id,
-                    "category_id": category_id,
-                    "status": form.status,
-                    "description": form.description,
-                    "purchase_date": form.purchase_date,
-                    "created_at": datetime.utcnow().isoformat(),
-                    "created_by": user.get("user_id"),
-                    "device_price": form.device_price,
-                    "future": future
-                })
-        
-        for d in devices_to_insert:
-            qr_url, bar_url = d["future"].result()
-            d["qr_url"] = qr_url
-            d["barcode_url"] = bar_url
-            del d["future"]
+            devices_to_insert.append({
+                "device_name": form.device_name,
+                "device_code": dev_code,
+                "room_id": r_id,
+                "category_id": category_id,
+                "status": form.status,
+                "description": form.description,
+                "purchase_date": form.purchase_date,
+                "created_at": datetime.utcnow().isoformat(),
+                "created_by": user.get("user_id"),
+                "device_price": form.device_price,
+                "qr_url": f"/api/web/devices/qr/{dev_code}",
+                "barcode_url": f"/api/web/devices/barcode/{dev_code}"
+            })
         
         res = supabase.table("devices").insert(devices_to_insert).execute()
         
@@ -440,61 +418,39 @@ def import_and_register(file: UploadFile = File(...), background_tasks: Backgrou
         room_map = {r['room_name']: r['id'] for r in rooms_data}
         cat_map = {c['category_name']: {'id': c['id'], 'code': c['category_code']} for c in cats_data}
 
-        def upload_codes_import(dev_code):
-            qr_buf = io.BytesIO()
-            qrcode.make(dev_code).save(qr_buf, format='PNG')
-            qr_path = f"qr_{dev_code}.png"
-            supabase.storage.from_("qrcodes").upload(qr_path, qr_buf.getvalue(), {"content-type": "image/png"})
-            qr_url = get_safe_url("qrcodes", qr_path)
+        for index, row in df.iterrows():
+            d_name = str(row.get('device_name', ''))
+            r_name = str(row.get('room_name', ''))
+            c_name = str(row.get('category_name', ''))
+            qty = int(row.get('quantity', 1))
+            d_price = str(row.get('device_price', ''))
+            p_date = str(row.get('purchase_date', ''))
+            description = str(row.get('description', ''))
 
-            bar_buf = io.BytesIO()
-            Code128(dev_code, writer=ImageWriter()).write(bar_buf)
-            bar_path = f"bar_{dev_code}.png"
-            supabase.storage.from_("qrcodes").upload(bar_path, bar_buf.getvalue(), {"content-type": "image/png"})
-            bar_url = get_safe_url("qrcodes", bar_path)
-            return qr_url, bar_url
+            if r_name not in room_map or c_name not in cat_map:
+                continue
+            
+            if not description or description == 'nan' or not d_price or d_price == 'nan':
+                continue
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-            for index, row in df.iterrows():
-                d_name = str(row.get('device_name', ''))
-                r_name = str(row.get('room_name', ''))
-                c_name = str(row.get('category_name', ''))
-                qty = int(row.get('quantity', 1))
-                d_price = str(row.get('device_price', ''))
-                p_date = str(row.get('purchase_date', ''))
-                description = str(row.get('description', ''))
+            r_id = room_map[r_name]
+            c_id = cat_map[c_name]['id']
+            c_code = cat_map[c_name]['code']
 
-                if r_name not in room_map or c_name not in cat_map:
-                    continue
-                
-                if not description or description == 'nan' or not d_price or d_price == 'nan':
-                    continue
+            for i in range(qty):
+                dev_code = f"{r_name.replace(' ', '')}-{c_code}-{base_ts}-{index}-{i+1}"
 
-                r_id = room_map[r_name]
-                c_id = cat_map[c_name]['id']
-                c_code = cat_map[c_name]['code']
-
-                for i in range(qty):
-                    dev_code = f"{r_name.replace(' ', '')}-{c_code}-{base_ts}-{index}-{i+1}"
-                    
-                    future = executor.submit(upload_codes_import, dev_code)
-
-                    devices_to_insert.append({
-                        "device_name": d_name, "device_code": dev_code,
-                        "room_id": r_id, "category_id": c_id, "status": "Tốt",
-                        "purchase_date": p_date if p_date else datetime.utcnow().isoformat(),
-                        "device_price": d_price,
-                        "description": description,
-                        "created_at": datetime.utcnow().isoformat(),
-                        "created_by": user.get("user_id"),
-                        "future": future
-                    })
-
-        for d in devices_to_insert:
-            qr_url, bar_url = d["future"].result()
-            d["qr_url"] = qr_url
-            d["barcode_url"] = bar_url
-            del d["future"]
+                devices_to_insert.append({
+                    "device_name": d_name, "device_code": dev_code,
+                    "room_id": r_id, "category_id": c_id, "status": "Tốt",
+                    "purchase_date": p_date if p_date else datetime.utcnow().isoformat(),
+                    "device_price": d_price,
+                    "description": description,
+                    "created_at": datetime.utcnow().isoformat(),
+                    "created_by": user.get("user_id"),
+                    "qr_url": f"/api/web/devices/qr/{dev_code}",
+                    "barcode_url": f"/api/web/devices/barcode/{dev_code}"
+                })
 
         res = supabase.table("devices").insert(devices_to_insert).execute()
         
@@ -659,3 +615,25 @@ def upload_device_image(
         return {"message": "Upload ảnh thành công", "image_url": image_url}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@router.get("/qr/{dev_code}")
+def generate_qr(dev_code: str):
+    try:
+        qr_buf = io.BytesIO()
+        # Generate QR code
+        qrcode.make(dev_code).save(qr_buf, format='PNG')
+        qr_buf.seek(0)
+        return StreamingResponse(qr_buf, media_type="image/png")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/barcode/{dev_code}")
+def generate_barcode(dev_code: str):
+    try:
+        bar_buf = io.BytesIO()
+        # Generate Barcode (Code128)
+        Code128(dev_code, writer=ImageWriter()).write(bar_buf)
+        bar_buf.seek(0)
+        return StreamingResponse(bar_buf, media_type="image/png")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
