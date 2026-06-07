@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.routers import auth, devices, inventory, rooms, categories, users, requests, dashboard, notifications, handheld
+from core.mqtt_client import start_mqtt, stop_mqtt
 
 app = FastAPI(title="Quản lý Thiết bị API", version="1.0.0")
 
@@ -24,6 +25,13 @@ app.include_router(dashboard.router, prefix="/api/dashboard", tags=["Dashboard"]
 app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
 app.include_router(handheld.router, prefix="/api/handheld", tags=["Handheld"])
 
+@app.on_event("startup")
+async def startup_event():
+    start_mqtt()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    stop_mqtt()
 @app.get("/")
 async def root():
     return {"message": "Hệ thống Quản lý Thiết bị API đang hoạt động"}

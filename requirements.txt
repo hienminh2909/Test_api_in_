@@ -10,3 +10,4 @@ pandas
 openpyxl
 pillow
 python-dateutil
+paho-mqtt==1.6.1
