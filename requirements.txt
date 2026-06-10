@@ -3,11 +3,14 @@ uvicorn
 supabase
 python-jose[cryptography]
 pydantic
+pydantic-settings
 python-multipart
 qrcode
 python-barcode
 pandas
 openpyxl
 pillow
+python-dotenv
+firebase-admin==6.5.0
 python-dateutil
 paho-mqtt==1.6.1
