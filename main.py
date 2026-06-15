@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import os
 
 from api.routers import auth, devices, inventory, rooms, categories, users, requests, dashboard, notifications, handheld
 from core.mqtt_client import start_mqtt, stop_mqtt

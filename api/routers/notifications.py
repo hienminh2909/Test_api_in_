@@ -22,6 +22,21 @@ class NotificationCreate(BaseModel):
     content: str
     link: Optional[str] = None
 
+class FcmTokenRequest(BaseModel):
+    fcm_token: str
+
+class AdminNotificationRequest(BaseModel):
+    target_user_ids: List[int]
+    title: str
+    content: str
+    link: Optional[str] = None
+
+@router.get("/unread-count")
+def get_unread_count(user: dict = Depends(get_current_user)):
+    user_id = user.get("user_id")
+    res = supabase.table("notifications").select("id", count="exact").eq("user_id", user_id).eq("is_read", False).execute()
+    return {"count": res.count if res.count is not None else 0}
+
 @router.get("")
 def get_my_notifications(user: dict = Depends(get_current_user)):
     user_id = user.get("user_id")
@@ -33,7 +48,6 @@ def mark_as_read(notif_id: int, user: dict = Depends(get_current_user)):
     curr_user_id = user.get("user_id")
     print(f">>> DEBUG: Marking notif {notif_id} as read for user {curr_user_id}")
     res = supabase.table("notifications").update({"is_read": True}).eq("id", notif_id).eq("user_id", curr_user_id).execute()
-    print(f">>> DEBUG: Result: {res.data}")
     return {"success": True}
 
 @router.post("/read-all")
@@ -57,6 +71,12 @@ def delete_all_notifications(user: dict = Depends(get_current_user)):
     res = supabase.table("notifications").delete().eq("user_id", curr_user_id).execute()
     return {"success": True}
 
+@router.post("/fcm-token")
+def update_fcm_token(req: FcmTokenRequest, user: dict = Depends(get_current_user)):
+    user_id = user.get("user_id")
+    supabase.table("users").update({"fcm_token": req.fcm_token}).eq("id", user_id).execute()
+    return {"success": True, "message": "Đã cập nhật FCM Token"}
+
 @router.post("/test")
 def send_test_notification(user: dict = Depends(get_current_user)):
     user_id = user.get("user_id")
@@ -73,6 +93,28 @@ def send_test_notification(user: dict = Depends(get_current_user)):
         return {"success": True, "data": res.data}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Lỗi tạo thông báo: {str(e)}")
+
+@router.post("/admin/send")
+def send_admin_notification(req: AdminNotificationRequest, user: dict = Depends(get_current_user)):
+    user_role = str(user.get("role", "")).lower()
+    curr_user_id = user.get("user_id")
+    if user_role != "admin":
+        raise HTTPException(status_code=403, detail="Chỉ admin mới có quyền tạo thông báo")
+    
+    try:
+        if 0 in req.target_user_ids:
+            # Gửi cho tất cả người dùng
+            users_res = supabase.table("users").select("id, username").execute()
+            for u in users_res.data:
+                if "_deleted_" not in u.get("username", "") and u["id"] != curr_user_id:
+                    create_notification(u["id"], req.title, req.content, req.link, created_by=curr_user_id)
+        else:
+            # Gửi cho từng người cụ thể
+            for uid in req.target_user_ids:
+                create_notification(uid, req.title, req.content, req.link, created_by=curr_user_id)
+        return {"success": True, "message": "Tạo thông báo thành công"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lỗi hệ thống: {str(e)}")
 
 @router.post("")
 def create_custom_notification(data: NotificationCreate, user: dict = Depends(get_current_user)):
@@ -109,5 +151,6 @@ def create_notification(user_id, title: str, content: str, link: str = None, cre
             
         supabase.table("notifications").insert(data).execute()
         print(f">>> NOTIF: Created notification for user {user_id}")
+        
     except Exception as e:
         print(f">>> ERROR creating notification for user {user_id}: {e}")
