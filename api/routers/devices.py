@@ -15,6 +15,7 @@ from core.config import supabase
 from services.auth_service import get_current_user
 from schemas.device import DeviceResponse, RegisterDevice, DeviceUpdate
 from api.routers.notifications import create_notification
+from core.cache import summary_cache, dashboard_cache
 
 router = APIRouter()
 
@@ -101,6 +102,11 @@ def get_devices_summary(
     role = user.get("role")
     user_room_id = user.get("room_id")
 
+    cache_key = f"summary_{category_id}_{status}_{search}_{ids}_{room_id}_{role}_{user_room_id}"
+    cached_data = summary_cache.get(cache_key)
+    if cached_data is not None:
+        return cached_data
+
     query = supabase.table("devices").select("*, rooms(id, room_name), categories(category_name), users(full_name)")
 
     if role == "teacher":
@@ -172,7 +178,9 @@ def get_devices_summary(
             if not grouped_data[group_key].get("image_url") and item.get("image_url"):
                 grouped_data[group_key]["image_url"] = item.get("image_url")
 
-    return list(grouped_data.values())
+    res_list = list(grouped_data.values())
+    summary_cache.set(cache_key, res_list)
+    return res_list
 
 from fastapi import BackgroundTasks
 
@@ -251,6 +259,8 @@ def register_device(form: RegisterDevice, background_tasks: BackgroundTasks, use
         if not res.data:
             raise HTTPException(status_code=500, detail="Không thể lưu thiết bị vào cơ sở dữ liệu")
 
+        summary_cache.clear()
+        dashboard_cache.clear()
         background_tasks.add_task(send_register_notifications, user, len(res.data), form.device_name, form.room_name)
 
         return {
@@ -454,6 +464,9 @@ def import_and_register(file: UploadFile = File(...), background_tasks: Backgrou
 
         res = supabase.table("devices").insert(devices_to_insert).execute()
         
+        summary_cache.clear()
+        dashboard_cache.clear()
+        
         if background_tasks:
             background_tasks.add_task(send_import_notifications, user, df)
 
@@ -494,6 +507,8 @@ def update_device(device_id: int, req: DeviceUpdate, user: dict = Depends(get_cu
                 raise HTTPException(status_code=404, detail=f"Danh mục {req.category} không tồn tại")
                 
         res = supabase.table("devices").update(update_data).eq("id", device_id).execute()
+        summary_cache.clear()
+        dashboard_cache.clear()
         return {"message": "Cập nhật thành công!"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -511,6 +526,8 @@ def delete_device(device_id: int, user: dict = Depends(get_current_user)):
         if not res.data:
             raise HTTPException(status_code=404, detail="Không tìm thấy thiết bị")
             
+        summary_cache.clear()
+        dashboard_cache.clear()
         return {"message": "Đã xóa thiết bị thành công"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -598,6 +615,8 @@ def upload_device_image(
                         if res.data:
                             print(f"DEBUG: [THANH CONG] Da cap nhat device ID {did} (Lan thu {attempt + 1})")
                             success = True
+                            summary_cache.clear()
+                            dashboard_cache.clear()
                             break
                         else:
                             print(f"DEBUG: [CHO DOI] Khong tim thay ID {did}, dang thu lai...")

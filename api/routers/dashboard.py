@@ -2,11 +2,16 @@ from fastapi import APIRouter, Depends
 from core.config import supabase
 from services.auth_service import get_current_user
 from datetime import datetime
+from core.cache import dashboard_cache
 
 router = APIRouter()
 
 @router.get("/activity")
 def get_recent_activity(user: dict = Depends(get_current_user)):
+    cache_key = "dashboard_activity"
+    cached = dashboard_cache.get(cache_key)
+    if cached is not None:
+        return cached
     try:
         # 1. Lấy 5 lượt quét kiểm kê gần đây
         inventory_logs = supabase.table("inventory_logs").select("*, devices(device_name)").order("inventory_at", desc=True).limit(5).execute()
@@ -54,13 +59,19 @@ def get_recent_activity(user: dict = Depends(get_current_user)):
             })
 
         activities.sort(key=lambda x: x.get("time") or "", reverse=True)
-        return activities[:10]
+        result = activities[:10]
+        dashboard_cache.set(cache_key, result)
+        return result
     except Exception as e:
         print(f"ERROR in get_recent_activity: {e}")
         return []
 
 @router.get("/inventory-history")
 def get_inventory_history(months: int = 6, user: dict = Depends(get_current_user)):
+    cache_key = f"dashboard_history_{months}"
+    cached = dashboard_cache.get(cache_key)
+    if cached is not None:
+        return cached
     try:
         from dateutil.relativedelta import relativedelta
         
@@ -121,11 +132,13 @@ def get_inventory_history(months: int = 6, user: dict = Depends(get_current_user
             total_data.append(h_total)
             curr += relativedelta(months=1)
             
-        return {
+        result = {
             "labels": labels,
             "total": total_data,
             "checked": checked_data
         }
+        dashboard_cache.set(cache_key, result)
+        return result
     except Exception as e:
         print(f"ERROR in get_inventory_history: {e}")
         return {"labels": [], "total": [], "checked": []}
