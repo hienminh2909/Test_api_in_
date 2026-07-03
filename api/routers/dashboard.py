@@ -13,24 +13,31 @@ def get_recent_activity(user: dict = Depends(get_current_user)):
     if cached is not None:
         return cached
     try:
-        # 1. Lấy 5 lượt quét kiểm kê gần đây
-        inventory_logs = supabase.table("inventory_logs").select("*, devices(device_name)").order("inventory_at", desc=True).limit(5).execute()
+
+        inventory_logs = supabase.table("inventory_logs").select("*, devices(device_name, status)").order("inventory_at", desc=True).limit(5).execute()
         
-        # 2. Lấy 5 báo hỏng gần đây
+
         report_logs = supabase.table("requests").select("*, devices(device_name), users!requests_created_by_fkey(full_name)").eq("request_type", "REPORT").order("created_at", desc=True).limit(5).execute()
         
-        # 3. Lấy 5 thiết bị mới thêm gần đây
+
         new_devices = supabase.table("devices").select("*, rooms(room_name)").order("created_at", desc=True).limit(5).execute()
 
         activities = []
 
         for log in (inventory_logs.data or []):
-            d_name = log.get('devices', {}).get('device_name', 'Thiết bị') if log.get('devices') else 'Thiết bị'
+            device_info = log.get('devices') or {}
+            d_name = device_info.get('device_name', 'Thiết bị')
+            
+            # Lấy trạng thái hiện tại của thiết bị thay vì trạng thái lúc quét
+            status_scan = device_info.get('status', 'N/A')
+            if status_scan == 'Bình thường':
+                status_scan = 'Tốt'
+                
             activities.append({
                 "type": "inventory",
                 "title": "Kiểm kê thiết bị",
-                "content": f"Thiết bị: {d_name} - Trạng thái: {log.get('status_at_scan', 'N/A')}",
-                "description": f"Thiết bị: {d_name} - Trạng thái: {log.get('status_at_scan', 'N/A')}",
+                "content": f"Thiết bị: {d_name} - Trạng thái: {status_scan}",
+                "description": f"Thiết bị: {d_name} - Trạng thái: {status_scan}",
                 "time": log.get("inventory_at"),
                 "user": log.get("handheld_name", "N/A")
             })
@@ -78,13 +85,13 @@ def get_inventory_history(months: int = 6, user: dict = Depends(get_current_user
         end_date = datetime.utcnow()
         start_date = (end_date - relativedelta(months=months-1)).replace(day=1, hour=0, minute=0, second=0)
         
-        # 1. Lấy tất cả inventory_logs trong khoảng thời gian này
+
+        # Bỏ lte filter để tránh lỗi múi giờ làm lọt log
         logs_res = supabase.table("inventory_logs").select("inventory_at, device_id") \
             .gte("inventory_at", start_date.isoformat()) \
-            .lte("inventory_at", end_date.isoformat()) \
             .execute()
         
-        # 2. Lấy tổng số thiết bị
+
         devices_res = supabase.table("devices").select("id, purchase_date").execute()
         all_devices = devices_res.data or []
         
@@ -105,12 +112,12 @@ def get_inventory_history(months: int = 6, user: dict = Depends(get_current_user
             checked_ids = set()
             for log in (logs_res.data or []):
                 try:
-                    # Parse date more robustly
-                    ts = log['inventory_at'].replace('Z', '').split('+')[0]
-                    log_date = datetime.fromisoformat(ts)
+                    import dateutil.parser
+                    log_date = dateutil.parser.isoparse(log['inventory_at']).replace(tzinfo=None)
                     if month_start <= log_date <= month_end:
                         checked_ids.add(log['device_id'])
-                except:
+                except Exception as e:
+                    print(f"Error parsing date {log.get('inventory_at')}: {e}")
                     continue
             
             checked_data.append(len(checked_ids))

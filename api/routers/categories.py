@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from core.config import supabase
 from services.auth_service import get_current_user
 from pydantic import BaseModel
@@ -13,16 +13,16 @@ class CategoryCreate(BaseModel):
 
 @router.get("")
 def get_categories(user: dict = Depends(get_current_user)):
-    # Lấy danh sách categories
+
     categories_res = supabase.table("categories").select("*").execute()
     categories = categories_res.data
     
-    # Lấy số lượng thiết bị cho mỗi category
-    # Dùng query để lấy tất cả devices và count theo category_id
+
+
     devices_res = supabase.table("devices").select("category_id").execute()
     device_data = devices_res.data
     
-    # Đếm thủ công (vì supabase-py hạn chế aggregate phức tạp trong join)
+
     count_map = {}
     for d in device_data:
         cat_id = d.get("category_id")
@@ -45,7 +45,7 @@ def create_category(req: CategoryCreate, user: dict = Depends(get_current_user))
         data_to_insert = req.dict()
         print(f">>> API CATEGORIES: Data to Supabase: {data_to_insert}")
         
-        # Thử kiểm tra bảng trước khi insert
+
         test_res = supabase.table("categories").select("id").limit(1).execute()
         print(f">>> API CATEGORIES: Table check (Select 1): {test_res.data}")
 

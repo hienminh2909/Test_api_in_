@@ -4,6 +4,7 @@ from pydantic import BaseModel
 
 from core.config import supabase
 from services.auth_service import get_current_user
+from core.cache import dashboard_cache
 
 router = APIRouter()
 
@@ -117,10 +118,10 @@ def scan_inventory(req: InventoryScanRequest, user: dict = Depends(get_current_u
     try:
         now = datetime.utcnow().isoformat()
         
-        # Cập nhật thiết bị
+
         supabase.table("devices").update({"last_inventory_at": now}).eq("id", req.device_id).execute()
         
-        # Ghi log kiểm kê
+
         log_data = {
             "device_id": req.device_id,
             "status_at_scan": req.status_at_scan,
@@ -132,6 +133,7 @@ def scan_inventory(req: InventoryScanRequest, user: dict = Depends(get_current_u
         if not res.data:
             raise HTTPException(status_code=500, detail="Không thể ghi log kiểm kê")
             
+        dashboard_cache.clear()
         return {"message": "Ghi nhận kiểm kê thành công"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -142,6 +144,7 @@ def delete_inventory_log(log_id: int, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Chỉ admin mới có quyền xóa lịch sử kiểm kê")
     try:
         res = supabase.table("inventory_logs").delete().eq("id", log_id).execute()
+        dashboard_cache.clear()
         return {"message": "Xóa nhật ký thành công"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -152,6 +155,7 @@ def clear_all_inventory_logs(user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Chỉ admin mới có quyền xóa lịch sử kiểm kê")
     try:
         res = supabase.table("inventory_logs").delete().neq("id", 0).execute()
+        dashboard_cache.clear()
         return {"message": "Đã xóa toàn bộ nhật ký thành công"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

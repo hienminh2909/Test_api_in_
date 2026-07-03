@@ -23,11 +23,11 @@ def create_request(req: RequestCreate, user: dict = Depends(get_current_user)):
         res = supabase.table("requests").insert(request_data).execute()
         
         if res.data:
-            # Lấy thông tin người gửi để hiện tên trong thông báo
+
             sender_info = supabase.table("users").select("full_name, username").eq("id", user.get("user_id")).execute()
             sender_name = sender_info.data[0].get("full_name") or user.get("username") or "Người dùng"
             
-            # THÔNG BÁO CHO ADMIN
+
             admins = supabase.table("users").select("id").in_("role", ["admin", "Admin"]).execute()
             notif_link = "/requests?tab=advanced" if req.request_type != "REPORT" else "/requests"
             for admin in admins.data:
@@ -90,7 +90,7 @@ def resolve_request(request_id: int, status: str, user: dict = Depends(get_curre
         "resolved_at": datetime.utcnow().isoformat()
     }
     
-    # Lấy thông tin yêu cầu hiện tại để lấy ID người gửi
+
     request_info = supabase.table("requests").select("*, devices(device_name)").eq("id", request_id).execute()
     
     if not request_info.data:
@@ -110,7 +110,7 @@ def resolve_request(request_id: int, status: str, user: dict = Depends(get_curre
             update_resolve_data["device_id"] = None
             supabase.table("requests").update(update_resolve_data).eq("id", request_id).execute()
             
-            # Tiến hành xóa thiết bị
+
             supabase.table("devices").delete().eq("id", dev_id).execute()
         elif req_type == "UPDATE":
             payload = req.get("update_payload")
@@ -122,7 +122,7 @@ def resolve_request(request_id: int, status: str, user: dict = Depends(get_curre
             new_status = req.get("status_device")
             if new_status and new_status != "pending":
                 supabase.table("devices").update({"status": new_status}).eq("id", dev_id).execute()
-    # THÔNG BÁO CHO NGƯỜI GỬI
+
     status_label = "PHÊ DUYỆT" if status == "approved" else "TỪ CHỐI"
     create_notification(
         user_id=sender_id,

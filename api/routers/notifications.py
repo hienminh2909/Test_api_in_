@@ -103,13 +103,13 @@ def send_admin_notification(req: AdminNotificationRequest, user: dict = Depends(
     
     try:
         if 0 in req.target_user_ids:
-            # Gửi cho tất cả người dùng
+
             users_res = supabase.table("users").select("id, username").execute()
             for u in users_res.data:
                 if "_deleted_" not in u.get("username", "") and u["id"] != curr_user_id:
                     create_notification(u["id"], req.title, req.content, req.link, created_by=curr_user_id)
         else:
-            # Gửi cho từng người cụ thể
+
             for uid in req.target_user_ids:
                 create_notification(uid, req.title, req.content, req.link, created_by=curr_user_id)
         return {"success": True, "message": "Tạo thông báo thành công"}
@@ -127,7 +127,7 @@ def create_custom_notification(data: NotificationCreate, user: dict = Depends(ge
         if data.user_id:
             create_notification(data.user_id, data.title, data.content, data.link, created_by=curr_user_id)
         else:
-            # Gửi cho tất cả người dùng
+
             users_res = supabase.table("users").select("id").execute()
             for u in users_res.data:
                 create_notification(u["id"], data.title, data.content, data.link, created_by=curr_user_id)

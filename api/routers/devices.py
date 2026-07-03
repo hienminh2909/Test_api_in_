@@ -209,7 +209,7 @@ def register_device(form: RegisterDevice, background_tasks: BackgroundTasks, use
     role = user.get("role")
     user_room_id = user.get("room_id")
     
-    # KIỂM TRA PHÂN QUYỀN CHO TEACHER
+
     if role == "teacher":
         if user_room_id is None:
             raise HTTPException(status_code=403, detail="Tài khoản giáo viên chưa được gán phòng quản lý")
@@ -319,10 +319,10 @@ def validate_import(file: UploadFile = File(...), user: dict = Depends(get_curre
                 "error_msg": error_msg
             })
 
-            # Check thêm mô tả
+
             if not str(row.get('description', '')).strip() or str(row.get('description', '')) == 'nan':
                 error_msg.append("Thiếu mô tả thiết bị")
-                preview_data[-1]["is_valid"] = False # Đánh dấu không hợp lệ
+                preview_data[-1]["is_valid"] = False
             
             preview_data[-1]["is_valid"] = len(error_msg) == 0
 
@@ -333,12 +333,12 @@ def validate_import(file: UploadFile = File(...), user: dict = Depends(get_curre
 @router.get("/template")
 def download_template():
     try:
-        # Tạo file mẫu với các cột yêu cầu (V2)
+
         columns = [
             "device_name", "room_name", "category_name", 
             "status", "device_price", "quantity", "purchase_date", "description"
         ]
-        # Dữ liệu mẫu (ví dụ)
+
         example_data = [{
             "device_name": "Máy tính Dell Latitude 7490",
             "room_name": "Phòng 101",
@@ -546,15 +546,15 @@ def upload_device_image(
     - device_name: tên thiết bị (dùng để đặt tên file)
     """
     try:
-        # Đọc file ảnh
+
         contents = file.file.read()
         if not contents:
             raise HTTPException(status_code=400, detail="File ảnh rỗng")
 
-        # Xác định content-type
+
         content_type = file.content_type or "image/png"
         
-        # Tạo tên file an toàn (loại bỏ dấu tiếng Việt và ký tự đặc biệt)
+
         import unicodedata
         import re
 
@@ -564,16 +564,16 @@ def upload_device_image(
 
         ext = file.filename.split(".")[-1] if "." in file.filename else "png"
         raw_name = device_name or "device"
-        # Loại bỏ dấu, chuyển sang lowercase, thay khoảng trắng/ký tự đặc biệt bằng gạch dưới
+
         safe_name = remove_accents(raw_name).lower()
         safe_name = re.sub(r'[^a-z0-9]', '_', safe_name)
-        # Loại bỏ gạch dưới thừa
+
         safe_name = re.sub(r'_+', '_', safe_name).strip('_')
         
         timestamp = int(time.time())
         file_path = f"{safe_name}_{timestamp}.{ext}"
 
-        # Upload lên Supabase Storage bucket 'image_device'
+
         try:
             supabase.storage.from_("image_device").upload(
                 path=file_path,
@@ -582,10 +582,10 @@ def upload_device_image(
             )
         except Exception as storage_err:
             print(f"STORAGE ERROR: {str(storage_err)}")
-            # Nếu bucket chưa có hoặc lỗi, trả về lỗi chi tiết hơn
+
             raise HTTPException(status_code=500, detail=f"Lỗi Storage Supabase: {str(storage_err)}. Vui lòng kiểm tra bucket 'image_device' đã được tạo chưa?")
 
-        # Lấy public URL
+
         try:
             image_url_res = supabase.storage.from_("image_device").get_public_url(file_path)
             # Một số phiên bản trả về object, một số trả về string trực tiếp
@@ -596,10 +596,10 @@ def upload_device_image(
         except:
             image_url = f"{supabase_url}/storage/v1/object/public/image_device/{file_path}"
 
-        # Cập nhật image_url cho tất cả device_ids
+
         if device_ids and str(device_ids).strip() != "None":
             try:
-                # Xử lý chuỗi ID (ví dụ: "1,2,3")
+
                 dids = [int(x.strip()) for x in str(device_ids).split(",") if x.strip()]
                 print(f"DEBUG: Bat dau cap nhat image_url cho {len(dids)} thiet bi: {dids}")
                 
@@ -639,7 +639,7 @@ def upload_device_image(
 def generate_qr(dev_code: str):
     try:
         qr_buf = io.BytesIO()
-        # Generate QR code
+
         qrcode.make(dev_code).save(qr_buf, format='PNG')
         qr_buf.seek(0)
         return StreamingResponse(qr_buf, media_type="image/png")
@@ -650,7 +650,7 @@ def generate_qr(dev_code: str):
 def generate_barcode(dev_code: str):
     try:
         bar_buf = io.BytesIO()
-        # Generate Barcode (Code128)
+
         Code128(dev_code, writer=ImageWriter()).write(bar_buf)
         bar_buf.seek(0)
         return StreamingResponse(bar_buf, media_type="image/png")

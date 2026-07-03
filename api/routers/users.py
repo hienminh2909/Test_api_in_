@@ -132,7 +132,7 @@ def get_my_profile(user: dict = Depends(get_current_user)):
 @router.put("/me/update")
 def update_my_profile(req: UserUpdate, user: dict = Depends(get_current_user)):
     try:
-        # Chỉ cho phép cập nhật một số trường
+
         update_data = {k: v for k, v in req.dict().items() if v is not None and k in ["full_name", "phone", "email"]}
         res = supabase.table("users").update(update_data).eq("id", user.get("user_id")).execute()
         return res.data[0]
@@ -141,12 +141,12 @@ def update_my_profile(req: UserUpdate, user: dict = Depends(get_current_user)):
 
 @router.post("/me/change-password")
 def change_password(req: PasswordChange, user: dict = Depends(get_current_user)):
-    # 1. Kiểm tra mật khẩu cũ
+
     user_res = supabase.table("users").select("password_hash").eq("id", user.get("user_id")).execute()
     if not user_res.data or user_res.data[0]["password_hash"] != req.old_password:
         raise HTTPException(status_code=400, detail="Mật khẩu cũ không chính xác")
     
-    # 2. Cập nhật mật khẩu mới
+
     try:
         supabase.table("users").update({"password_hash": req.new_password}).eq("id", user.get("user_id")).execute()
         return {"message": "Đổi mật khẩu thành công"}
@@ -173,7 +173,7 @@ def create_user(req: UserCreate, user: dict = Depends(get_current_user)):
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Chỉ admin mới có quyền thao tác")
     
-    # Kiểm tra xem username đã tồn tại chưa
+
     check_user = supabase.table("users").select("id").eq("username", req.username).execute()
     if check_user.data:
         raise HTTPException(status_code=400, detail="Tên đăng nhập đã tồn tại trên hệ thống")
@@ -204,7 +204,7 @@ def reset_user_password(user_id: str, user: dict = Depends(get_current_user)):
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Chỉ admin mới có quyền thao tác")
     try:
-        # Đặt lại mật khẩu mặc định là 123456
+
         res = supabase.table("users").update({"password_hash": "123456"}).eq("id", user_id).execute()
         if not res.data:
             raise HTTPException(status_code=404, detail="Không tìm thấy người dùng")

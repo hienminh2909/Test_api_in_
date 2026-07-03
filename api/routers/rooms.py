@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from core.config import supabase
 from services.auth_service import get_current_user
 from pydantic import BaseModel
@@ -16,23 +16,23 @@ def get_rooms(user: dict = Depends(get_current_user)):
     user_room_id = user.get("room_id")
     print(f">>> API ROOMS: [GET] Fetching rooms for User: {user.get('user_id')} (Role: {role})")
     
-    query = supabase.table("rooms").select("*").order("room_name")
+    query = supabase.table("rooms").select("*")
     
-    # Nếu là teacher, chỉ lấy phòng được giao quản lý
     if role == "teacher":
         if user_room_id:
             query = query.eq("id", user_room_id)
         else:
-            return [] # Teacher không có phòng quản lý thì không thấy phòng nào
+            return []
             
+    query = query.order("room_name")
     rooms_res = query.execute()
     rooms = rooms_res.data
     
-    # Lấy số lượng thiết bị cho mỗi phòng
+
     devices_res = supabase.table("devices").select("room_id").execute()
     device_data = devices_res.data
     
-    # Đếm thủ công
+
     count_map = {}
     for d in device_data:
         r_id = d.get("room_id")
@@ -85,7 +85,7 @@ def delete_room(room_id: int, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Chỉ admin mới có quyền xóa phòng")
     
     try:
-        # Kiểm tra xem có thiết bị nào trong phòng không
+
         check_devices = supabase.table("devices").select("id").eq("room_id", room_id).limit(1).execute()
         if check_devices.data:
             raise HTTPException(status_code=400, detail="Không thể xóa phòng đang có thiết bị. Vui lòng di chuyển thiết bị trước.")

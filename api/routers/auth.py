@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from datetime import datetime, timedelta
 from jose import jwt
 
@@ -34,18 +34,18 @@ def login(req: LoginRequest):
 
 @router.post("/forgot-password")
 def forgot_password(req: ForgotPasswordRequest):
-    # 1. Tìm user
+
     res = supabase.table("users").select("id, full_name").eq("username", req.username).execute()
     if not res.data:
         raise HTTPException(status_code=404, detail="Tên đăng nhập không tồn tại")
     
     user = res.data[0]
 
-    # 2. Tạo thông báo cho Admin
+
     try:
         notif_content = f"Người dùng {user['full_name']} (@{req.username}) đã gửi yêu cầu đặt lại mật khẩu."
         supabase.table("notifications").insert({
-            "user_id": "8d6e355c-091a-4c28-98e3-f09c6474831a", # ID của Admin (hoặc lấy ID có role admin đầu tiên)
+            "user_id": "8d6e355c-091a-4c28-98e3-f09c6474831a",
             "content": notif_content,
             "created_at": datetime.utcnow().isoformat(),
             "status": "unread"
@@ -53,7 +53,7 @@ def forgot_password(req: ForgotPasswordRequest):
         
         return {"message": "Yêu cầu khôi phục mật khẩu đã được gửi tới Quản trị viên hệ thống."}
     except Exception as e:
-        # Nếu lỗi (ví dụ không tìm thấy bảng notifications), vẫn trả về thông báo để user biết hướng xử lý
+
         return {"message": "Vui lòng liên hệ trực tiếp với Quản trị viên để được cấp lại mật khẩu."}
 
 @router.put("/password")

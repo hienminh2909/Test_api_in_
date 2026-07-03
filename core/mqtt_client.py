@@ -4,11 +4,12 @@ from datetime import datetime
 import re
 
 from core.config import supabase
+from core.cache import dashboard_cache
 
 MQTT_BROKER = "485c424b34b94547a880a5e0ee048610.s1.eu.hivemq.cloud"
 MQTT_PORT = 8883
-MQTT_USER = "hienminh2909"                  # Username đã tạo ở Bước 3
-MQTT_PASSWORD = "Minhhien24@"           # Password đã tạo ở Bước 3
+MQTT_USER = "hienminh2909"
+MQTT_PASSWORD = "Minhhien24@"
 
 TOPIC_INV_REQ = "scanner/inventory/request"
 TOPIC_INV_RES = "scanner/inventory/response"
@@ -86,6 +87,7 @@ def handle_inventory_request(client, data):
             "status_at_scan": device["status"]
         }
         supabase.table("inventory_logs").insert(log_entry).execute()
+        dashboard_cache.clear()
 
         supabase.table("devices").update({"last_inventory_at": datetime.utcnow().isoformat()}).eq("id", device["id"]).execute()
 
@@ -141,14 +143,14 @@ def handle_report_request(client, data):
 
 mqtt_client = mqtt.Client()
 mqtt_client.username_pw_set(MQTT_USER, MQTT_PASSWORD)
-mqtt_client.tls_set() # Kích hoạt bảo mật SSL/TLS để kết nối cổng 8883
+mqtt_client.tls_set()
 mqtt_client.on_connect = on_connect
 mqtt_client.on_message = on_message
 
 def start_mqtt():
     try:
         mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
-        mqtt_client.loop_start()  # Chạy vòng lặp nền không chặn
+        mqtt_client.loop_start()
         print("🚀 MQTT Client đã được khởi động.")
     except Exception as e:
         print("⚠️ Không thể kết nối tới MQTT Broker:", e)
