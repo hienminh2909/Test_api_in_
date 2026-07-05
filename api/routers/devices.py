@@ -156,11 +156,12 @@ def get_devices_summary(
         # Group key bao gồm cả giá tiền để tách các thiết bị có giá khác nhau
         d_price = str(item.get('device_price', ''))
         group_key = f"{item['device_name']}-{room_n}-{cat_n}-{item['status']}-{d_price}"
-        
         current_device_detail = {
             "id": item["id"],
             "device_code": item["device_code"],
             "qr_url": item.get("qr_url"),
+            "created_at": item.get("created_at"),
+            "updated_at": item.get("updated_at"),
         }
 
         if group_key not in grouped_data:

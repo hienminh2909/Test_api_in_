@@ -4,6 +4,7 @@ from services.auth_service import get_current_user
 from pydantic import BaseModel, validator
 from typing import Optional
 import re
+from datetime import datetime, timezone
 
 router = APIRouter()
 
@@ -15,6 +16,7 @@ class UserCreate(BaseModel):
     room_id: Optional[int] = None
     phone: Optional[str] = None
     email: Optional[str] = None
+    handheld_name: Optional[str] = None
 
     @validator("full_name")
     def validate_full_name(cls, v):
@@ -72,6 +74,7 @@ class UserUpdate(BaseModel):
     room_id: Optional[int] = None
     phone: Optional[str] = None
     email: Optional[str] = None
+    handheld_name: Optional[str] = None
 
     @validator("full_name")
     def validate_full_name(cls, v):
@@ -124,7 +127,7 @@ class PasswordChange(BaseModel):
 
 @router.get("/me")
 def get_my_profile(user: dict = Depends(get_current_user)):
-    res = supabase.table("users").select("id, full_name, username, role, room_id, phone, email, created_at").eq("id", user.get("user_id")).execute()
+    res = supabase.table("users").select("id, full_name, username, role, room_id, phone, email, handheld_name, created_at").eq("id", user.get("user_id")).execute()
     if not res.data:
         raise HTTPException(status_code=404, detail="Không tìm thấy thông tin")
     return res.data[0]
@@ -157,7 +160,7 @@ def change_password(req: PasswordChange, user: dict = Depends(get_current_user))
 def get_users(user: dict = Depends(get_current_user)):
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Chỉ admin mới có quyền thao tác")
-    res = supabase.table("users").select("id, full_name, username, role, room_id, phone, email, created_at, rooms(room_name)").execute()
+    res = supabase.table("users").select("id, full_name, username, role, room_id, phone, email, handheld_name, created_at, rooms(room_name)").execute()
     
     # Flatten rooms(room_name)
     for u in res.data:
@@ -179,7 +182,9 @@ def create_user(req: UserCreate, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=400, detail="Tên đăng nhập đã tồn tại trên hệ thống")
 
     try:
-        res = supabase.table("users").insert(req.dict()).execute()
+        insert_data = req.dict()
+        insert_data["created_at"] = datetime.now(timezone.utc).isoformat()
+        res = supabase.table("users").insert(insert_data).execute()
         if not res.data:
             raise HTTPException(status_code=400, detail="Không thể tạo người dùng. Có thể username đã tồn tại.")
         return res.data[0]

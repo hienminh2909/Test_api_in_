@@ -39,8 +39,19 @@ def get_rooms(user: dict = Depends(get_current_user)):
         if r_id:
             count_map[r_id] = count_map.get(r_id, 0) + 1
             
+    users_res = supabase.table("users").select("full_name, room_id").execute()
+    managers_map = {}
+    for u in users_res.data:
+        r_id = u.get("room_id")
+        if r_id:
+            if r_id not in managers_map:
+                managers_map[r_id] = []
+            managers_map[r_id].append(u.get("full_name"))
+
     for room in rooms:
         room["device_count"] = count_map.get(room["id"], 0)
+        mgrs = managers_map.get(room["id"], [])
+        room["managers"] = ", ".join(mgrs) if mgrs else "Chưa phân công"
         
     return rooms
 
